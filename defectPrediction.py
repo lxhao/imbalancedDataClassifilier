@@ -63,17 +63,17 @@ def resultStatistic(y, yHat):
   return TP, FP, TN, FN
 
 
-# 用f1值评价模型
+# 用G-mean值评价模型
 def scorer(estimator, x, y):
   yHat = estimator.predict(x)
   TP, FP, TN, FN = resultStatistic(y, yHat)
-  precision = 0.0
-  recall = 0.0
-  if not TP == 0:
-    precision = TP * 1.0 / (TP + FP)
-    recall = TP * 1.0 / (TP + FN)
-  return 2 * precision * recall / (
-    precision + recall) if precision > 0 else 0  # 模型评估
+  TPrate = 0.0
+  if TP + FN > 0:
+    TPrate = TP / (TP + FN)
+  TNrate = 0.0
+  if TN + FP > 0:
+    TNrate = TN / (TN + FP)
+  return sqrt(TPrate * TNrate)
 
 
 # 另外一种模型评价方法，目前没有用到
@@ -116,7 +116,7 @@ def crossValidation(model, x, y):
 def modelCompare(x, y):
   # 决策树
   deTreeModel = DecisionTreeClassifier(criterion='entropy')
-  print("决策树模型的f1值", crossValidation(deTreeModel, x, y))
+  print(u"决策树模型的f1值", crossValidation(deTreeModel, x, y))
 
   # AdaBoost
   baseEstimator = DecisionTreeClassifier(criterion='entropy')
