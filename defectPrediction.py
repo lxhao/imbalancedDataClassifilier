@@ -3,16 +3,20 @@
 import glob
 from math import *
 
+from minepy import MINE
 import numpy as np
 import pandas as pd
+from scipy.stats import pearsonr
 from sklearn.cross_validation import StratifiedKFold, cross_val_score
-from sklearn.ensemble import AdaBoostClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.feature_selection import RFE
+from sklearn.feature_selection import SelectFromModel
+from sklearn.feature_selection import SelectKBest
 from sklearn.grid_search import GridSearchCV
-from sklearn.naive_bayes import GaussianNB, MultinomialNB
+from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
-from sklearn.tree import DecisionTreeClassifier
 
 
 # 从文件读取需要跳过的行数和数据的属性数量
@@ -34,8 +38,8 @@ def getSkipRowsAndAttrs(filepath):
 def readData(dirPath):
   result = {}
   for filename in glob.glob(dirPath + '*.arff'):
-    if not filename.endswith("ar4.arff"):
-      continue
+    # if not filename.endswith("ar4.arff"):
+    #   continue
     skipRows, attrs = getSkipRowsAndAttrs(filename)
     data = pd.read_csv(filename, header=None, skiprows=skipRows)
     y = pd.Categorical(data[attrs]).codes
@@ -114,33 +118,29 @@ def crossValidation(model, x, y):
 
 
 def modelCompare(x, y):
-  # 决策树
-  deTreeModel = DecisionTreeClassifier(criterion='entropy')
-  print(u"决策树模型的f1值", crossValidation(deTreeModel, x, y))
-
-  # AdaBoost
-  baseEstimator = DecisionTreeClassifier(criterion='entropy')
-  adaBoostModel = AdaBoostClassifier(base_estimator=baseEstimator,
-                                     n_estimators=10, learning_rate=0.1)
-  print("AdaBoost模型的f1值", crossValidation(adaBoostModel, x, y))
-  # 贝叶斯
-  print("高斯贝叶斯模型的f1值", crossValidation(GaussianNB(), x, y))
-  print("多项式分布贝叶斯模型的f1值", crossValidation(MultinomialNB(), x, y))
+  # # 决策树
+  # deTreeModel = DecisionTreeClassifier(criterion='entropy')
+  # print(u"决策树模型的f1值", crossValidation(deTreeModel, x, y))
+  #
+  # # AdaBoost
+  # baseEstimator = DecisionTreeClassifier(criterion='entropy')
+  # adaBoostModel = AdaBoostClassifier(base_estimator=baseEstimator,
+  #                                    n_estimators=10, learning_rate=0.1)
+  # print("AdaBoost模型的f1值", crossValidation(adaBoostModel, x, y))
+  # # 贝叶斯
+  # print("高斯贝叶斯模型的f1值", crossValidation(GaussianNB(), x, y))
+  # print("多项式分布贝叶斯模型的f1值", crossValidation(MultinomialNB(), x, y))
 
   # svm
   pipeSvc = Pipeline([('scl', StandardScaler()),
-                      ('clf', SVC(random_state=1, class_weight={1: 9}))])
-  rangeC = np.linspace(1, 1000, num=100)
-  rangeGama = np.linspace(0.1, 1, num=10)
+                      ('clf', SVC(random_state=1, class_weight={1: 10}))])
+  rangeC = np.linspace(100, 1000, num=100)
+  rangeGama = np.linspace(0, 100, num=200)
   paramGrid = [{
     'clf__C': rangeC,
     'clf__kernel': ['rbf'],
     'clf__gamma': rangeGama
-  },
-    {
-      'clf__C': rangeC,
-      'clf__kernel': ['linear'],
-    }
+  }
   ]
   greadSearch = GridSearchCV(estimator=pipeSvc,
                              param_grid=paramGrid,
@@ -151,6 +151,13 @@ def modelCompare(x, y):
   print(greadSearch.best_score_)
 
 
+# 由于MINE的设计不是函数式的，定义mic方法将其为函数式的，返回一个二元组，二元组的第2项设置成固定的P值0.5
+def mic(x, y):
+  m = MINE()
+  m.compute_score(x, y)
+  return (m.mic(), 0.5)
+
+
 def main():
   dataSets = readData("./data/")
   for filename, data in dataSets.items():
@@ -159,6 +166,9 @@ def main():
     y = data[:, -1]
     x = x.astype(np.float64)
     y = y.astype(np.int32)
+    # # 选择K个最好的特征，返回选择特征后的数据
+    # # 第一个参数为计算评估特征是否好的函数，该函数输入特征矩阵和目标向量，输出二元组（评分，P值）的数组，数组第i项为第i个特征的评分和P值。在此定义为计算相关系数
+    # # 参数k为选择的特征个数
     modelCompare(x, y)
 
 
