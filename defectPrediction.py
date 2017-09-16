@@ -3,7 +3,20 @@
 import glob
 from math import *
 
-from math import sin, cos, pi
+import numpy as np
+import pandas as pd
+from sklearn import preprocessing
+from sklearn.feature_selection import chi2
+from sklearn.cross_validation import StratifiedKFold, cross_val_score
+from sklearn.feature_selection import SelectKBest
+from sklearn.grid_search import GridSearchCV
+from sklearn.metrics import f1_score
+from sklearn.metrics import make_scorer
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import SVC
+
+import clusters
 from gaft.gaft import GAEngine
 from gaft.gaft.analysis.console_output import ConsoleOutputAnalysis
 from gaft.gaft.analysis.fitness_store import FitnessStoreAnalysis
@@ -12,27 +25,6 @@ from gaft.gaft.components import GAPopulation
 from gaft.gaft.operators import FlipBitMutation
 from gaft.gaft.operators import RouletteWheelSelection
 from gaft.gaft.operators import UniformCrossover
-from minepy import MINE
-import numpy as np
-import pandas as pd
-from scipy.stats import pearsonr
-from sklearn import svm
-from sklearn.cross_validation import StratifiedKFold, cross_val_score
-from sklearn.decomposition import PCA
-from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.feature_selection import RFE
-from sklearn.feature_selection import SelectFromModel
-from sklearn.feature_selection import SelectKBest
-from sklearn.grid_search import GridSearchCV
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
-from sklearn.metrics import make_scorer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-
-# 从文件读取需要跳过的行数和数据的属性数量
-import clusters
 
 
 def getSkipRowsAndAttrs(filepath):
@@ -53,8 +45,8 @@ def getSkipRowsAndAttrs(filepath):
 def readData(dirPath):
   result = {}
   for filename in glob.glob(dirPath + '*.arff'):
-    if not filename.endswith("CM1.arff"):
-      continue
+    # if not filename.endswith("ar5.arff"):
+    #   continue
     skipRows, attrs = getSkipRowsAndAttrs(filename)
     data = pd.read_csv(filename, header=None, skiprows=skipRows)
     y = pd.Categorical(data[attrs]).codes
@@ -126,67 +118,61 @@ def crossValidation(model, x, y, scorer):
   scores = cross_val_score(estimator=model,
                            X=x,
                            y=y,
-                           cv=10,
+                           cv=5,
                            n_jobs=-1,
-                           scoring='accuracy')
+                           scoring=scorer)
   return np.mean(scores)
 
 
-def modelCompare(x, y):
-  # svmModel = svm.SVC(kernel='rbf', C=195.41, gamma=0.0086, class_weight={1: 4})
-  # svmModel.fit(x, y)
-  # f1Scorer = make_scorer(f1_score)
-  # print('f1:', crossValidation(svmModel, x, y, scorer='f1'))
-  # # 决策树
-  # deTreeModel = DecisionTreeClassifier(criterion='entropy')
-  # print(u"决策树模型的f1值", crossValidation(deTreeModel, x, y))
-  #
-  # # AdaBoost
-  # baseEstimator = DecisionTreeClassifier(criterion='entropy')
-  # adaBoostModel = AdaBoostClassifier(base_estimator=baseEstimator,
-  #                                    n_estimators=10, learning_rate=0.1)
-  # print("AdaBoost模型的f1值", crossValidation(adaBoostModel, x, y))
-  # # 贝叶斯
-  # print("高斯贝叶斯模型的f1值", crossValidation(GaussianNB(), x, y))
-  # print("多项式分布贝叶斯模型的f1值", crossValidation(MultinomialNB(), x, y))
+# 统计样本正类和负类的数量
+# 返回正类和负类样本的数量
+def examplesDistri(y):
+  positiveCounter = 0
+  negativeCounter = 0
+  for i in y:
+    if i == 1:
+      positiveCounter += 1
+    else:
+      negativeCounter += 1
+  return positiveCounter, negativeCounter
 
-  search(x, y)
+
+def modelCompare(x, y):
+  x = preprocessing.scale(x)
+  # search(x, y)
   # svm
-  # pipeSvc = Pipeline([('scl', StandardScaler()),
-  #                     ('clf', SVC(random_state=1, class_weight={1: 10}))])
-  # rangeC = np.linspace(1, 1000, num=100)
-  # rangeGama = np.linspace(0.001, 0.01, num=100)
-  # paramGrid = [{
-  #   'clf__C': rangeC,
-  #   'clf__kernel': ['rbf'],
-  #   'clf__gamma': rangeGama
-  # }
-  # ]
-  # greadSearch = GridSearchCV(estimator=pipeSvc,
-  #                            param_grid=paramGrid,
-  #                            scoring='f1',
-  #                            cv=10,
-  #                            n_jobs=-1)
-  # greadSearch = greadSearch.fit(x, y)
-  # print(greadSearch.best_score_)
-  # print(greadSearch.best_params_)
+  posiNum, negaNum = examplesDistri(y)
+  pipeSvc = Pipeline([('clf', SVC(class_weight={1: negaNum / posiNum}))])
+  print("正类样本的权重", negaNum / posiNum);
+  rangeC = np.linspace(1, 10, num=30)
+  rangeGama = np.linspace(0, 1, num=100)
+  paramGrid = [{
+    'clf__C': rangeC,
+    'clf__gamma': rangeGama
+  }
+  ]
+  greadSearch = GridSearchCV(estimator=pipeSvc,
+                             param_grid=paramGrid,
+                             scoring=scorer,
+                             cv=5,
+                             n_jobs=-1)
+  greadSearch = greadSearch.fit(x, y)
+  print(greadSearch.best_score_)
+  print(greadSearch.best_params_)
 
 
 # Define fitness function.
 # @engine.fitness_register
 def fitness(indv, x, y):
   weight, gama = indv.variants
-  print(weight, gama)
   svmModel = SVC(class_weight={1: weight}, gamma=gama)
-  f1Scorer = make_scorer(f1_score)
-  value = crossValidation(svmModel, x, y, f1Scorer);
-  print(value)
+  value = crossValidation(svmModel, x, y, scorer=scorer);
   return value
 
 
 def search(x, y):
   # Define population.
-  indv_template = GAIndividual(ranges=[(1, 20), (0, 1)],
+  indv_template = GAIndividual(ranges=[(1, 10), (0, 1)],
                                encoding='binary',
                                eps=0.001)
   population = GAPopulation(indv_template=indv_template, size=50).init()
@@ -217,12 +203,9 @@ def main():
     print('数据集：', filename)
     print('特征数量：', len(x[0]))
     print('记录数量:', len(x))
-    posiNum, negaNum = clusters.examplesDistri(y)
+    posiNum, negaNum = examplesDistri(y)
     print('正例样本和负例样本的比例为%d:%d' % (posiNum, negaNum))
-    # pca = PCA(n_components='mle', svd_solver='full')
-    pca = PCA(n_components=10)
-    newX = pca.fit_transform(x)
-    print('主成分分析后特征数量:', len(newX[0]))
+    newX = SelectKBest(chi2, k=6).fit_transform(x, y)
     modelCompare(newX, y)
 
 
