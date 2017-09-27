@@ -1,20 +1,25 @@
 #!/usr/bin/python
 # -*- coding:utf-8 -*-
 import glob
+import random
 from math import *
+import time
 
 import numpy as np
 import pandas as pd
 from sklearn import preprocessing
+from sklearn.ensemble import AdaBoostClassifier
 from sklearn.feature_selection import chi2
 from sklearn.cross_validation import StratifiedKFold, cross_val_score
 from sklearn.feature_selection import SelectKBest
 from sklearn.grid_search import GridSearchCV
 from sklearn.metrics import f1_score
 from sklearn.metrics import make_scorer
+from sklearn.naive_bayes import GaussianNB
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 
 import clusters
 from gaft.gaft import GAEngine
@@ -41,6 +46,47 @@ def getSkipRowsAndAttrs(filepath):
   return skipRows, attrs
 
 
+# 获取标记为label的样本
+def getExamples(x, y, label):
+  xLabeled = []
+  for i in range(len(y)):
+    if y[i] == label:
+      xLabeled.append(x[i])
+  return xLabeled
+
+
+def stratifiedSampling(x, y, scale):
+  xSelected = []
+  ySelected = []
+  posiNum, negaNum = examplesDistri(y)
+  idxSelectedPosi = random.sample(range(int(len(y) * posiNum / len(y))),
+                                  int(scale * posiNum / len(y)))
+  idxSelectedNega = random.sample(range(int(len(y) * negaNum / len(y))),
+                                  int(scale * negaNum / len(y)))
+  idxSelectedNega.sort()
+  idxSelectedPosi.sort()
+  posiCount = 0
+  negaCount = 0
+  posiIdx = 0
+  negaIdx = 0
+  for i in range(len(y)):
+    if y[i] == 1:
+      if posiIdx < len(idxSelectedPosi) and idxSelectedPosi[
+        posiIdx] == posiCount:
+        xSelected.append(x[i])
+        ySelected.append(y[i])
+        posiIdx += 1
+      posiCount += 1
+    else:
+      if negaIdx < len(idxSelectedNega) and idxSelectedNega[
+        negaIdx] == negaCount:
+        xSelected.append(x[i])
+        ySelected.append(y[i])
+        negaIdx += 1
+      negaCount += 1
+  return xSelected, ySelected
+
+
 # 从文件夹读取测试数据
 def readData(dirPath):
   result = {}
@@ -53,6 +99,11 @@ def readData(dirPath):
     y.shape = len(y), 1
     data = data.values
     x = data[:, : -1]
+    # 样本数量大于300时，随机抽取300份
+    # if len(y) > 300:
+    #   posiNum, negaNum = examplesDistri(y)
+    #   x, y = stratifiedSampling(x, y, 300)
+    #   posiNum, negaNum = examplesDistri(y)
     result[filename] = np.hstack((x, y))
   return result
 
@@ -137,14 +188,13 @@ def examplesDistri(y):
   return positiveCounter, negativeCounter
 
 
-def modelCompare(x, y):
+def GASvm(x, y):
   x = preprocessing.scale(x)
   # search(x, y)
   # svm
   posiNum, negaNum = examplesDistri(y)
   pipeSvc = Pipeline([('clf', SVC(class_weight={1: negaNum / posiNum}))])
-  print("正类样本的权重", negaNum / posiNum);
-  rangeC = np.linspace(1, 10, num=30)
+  rangeC = np.linspace(1, 100, num=30)
   rangeGama = np.linspace(0, 1, num=100)
   paramGrid = [{
     'clf__C': rangeC,
@@ -157,8 +207,11 @@ def modelCompare(x, y):
                              cv=5,
                              n_jobs=-1)
   greadSearch = greadSearch.fit(x, y)
-  print(greadSearch.best_score_)
-  print(greadSearch.best_params_)
+  bestParams = greadSearch.best_params_
+  bestModel = SVC(C=bestParams['clf__C'], gamma=bestParams['clf__gamma'],
+                  class_weight={1: negaNum / posiNum})
+  f1 = crossValidation(bestModel, x, y, 'f1')
+  return greadSearch.best_score_, greadSearch.best_params_, f1
 
 
 # Define fitness function.
@@ -166,7 +219,7 @@ def modelCompare(x, y):
 def fitness(indv, x, y):
   weight, gama = indv.variants
   svmModel = SVC(class_weight={1: weight}, gamma=gama)
-  value = crossValidation(svmModel, x, y, scorer=scorer);
+  value = crossValidation(svmModel, x, y, scorer=scorer)
   return value
 
 
@@ -175,7 +228,7 @@ def search(x, y):
   indv_template = GAIndividual(ranges=[(1, 10), (0, 1)],
                                encoding='binary',
                                eps=0.001)
-  population = GAPopulation(indv_template=indv_template, size=50).init()
+  population = GAPopulation(indv_template=indv_template, size=30).init()
 
   # Create genetic operators.
   selection = RouletteWheelSelection()
@@ -193,20 +246,112 @@ def search(x, y):
   engine.run(ng=100)
 
 
+def getFileName():
+  localTime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+  return 'result_' + localTime + '.txt'
+
+
+def decisionTree(x, y):
+  # 决策树
+  deTreeModel = DecisionTreeClassifier(criterion='entropy')
+
+  f1 = crossValidation(deTreeModel, x, y, 'f1')
+  gmean = crossValidation(deTreeModel, x, y, scorer)
+  return gmean, f1
+
+
+def beyes(x, y):
+  f1 = crossValidation(GaussianNB(), x, y, 'f1')
+  gmean = crossValidation(GaussianNB(), x, y, scorer)
+  return gmean, f1
+
+
+def adaboost(x, y):
+  baseEstimator = DecisionTreeClassifier(criterion='entropy')
+  adaBoostModel = AdaBoostClassifier(base_estimator=baseEstimator,
+                                     n_estimators=10, learning_rate=0.1)
+  f1 = crossValidation(adaBoostModel, x, y, 'f1')
+  gmean = crossValidation(adaBoostModel, x, y, scorer)
+  return gmean, f1
+
+
+def svm(x, y):
+  pipeSvc = Pipeline([('clf', SVC())])
+  rangeC = np.linspace(1, 100, num=30)
+  rangeGama = np.linspace(0, 1, num=100)
+  paramGrid = [{
+    'clf__C': rangeC,
+    'clf__gamma': rangeGama
+  }
+  ]
+  greadSearch = GridSearchCV(estimator=pipeSvc,
+                             param_grid=paramGrid,
+                             scoring=scorer,
+                             cv=5,
+                             n_jobs=-1)
+  greadSearch = greadSearch.fit(x, y)
+  bestParams = greadSearch.best_params_
+  bestModel = SVC(C=bestParams['clf__C'], gamma=bestParams['clf__gamma'])
+  f1 = crossValidation(bestModel, x, y, 'f1')
+  return greadSearch.best_score_, f1
+
+
+def getDataInfo(filename, data):
+  x = data[:, : -1]
+  y = data[:, -1]
+  f = open('dataInfo.txt', 'w')
+  print(filename)
+  print('Samples:', len(y))
+  print('Attributes:', len(x[0]))
+  posiNum, negaNum = examplesDistri(y)
+  print('Defect Class:', posiNum)
+  print('Non-Defect Class:', negaNum)
+  print('Defect:%.2f\n' % (posiNum * 100.0 / (negaNum + posiNum)))
+
+
 def main():
+  f = open(getFileName(), 'w')
   dataSets = readData("./data/")
   for filename, data in dataSets.items():
+    if not filename.startswith('./data/CM1'):
+      continue
+    # getDataInfo(filename, data)
     x = data[:, : -1]
     y = data[:, -1]
     x = x.astype(np.float64)
     y = y.astype(np.int32)
-    print('数据集：', filename)
-    print('特征数量：', len(x[0]))
-    print('记录数量:', len(x))
-    posiNum, negaNum = examplesDistri(y)
-    print('正例样本和负例样本的比例为%d:%d' % (posiNum, negaNum))
-    newX = SelectKBest(chi2, k=6).fit_transform(x, y)
-    modelCompare(newX, y)
+    f.write('\n数据集%s\n' % (filename))
+    bestGmean = 0
+    bestParams = {}
+    bestFeatures = 0
+    for i in range(5, 13):
+      newX = SelectKBest(chi2, k=i).fit_transform(x, y)
+      tmpGmean, tmpParams, f1 = GASvm(newX, y)
+      if tmpGmean > bestGmean:
+        bestGmean = tmpGmean
+        bestParams = tmpParams
+        bestFeatures = i
+    print('GASvm:\ng-mean值为%.2f,f1值%.2f,参数为%s,特征数量为%d' % (
+      bestGmean, f1, bestParams, bestFeatures))
+    f.write('GASvm:\ng-mean值为%.2f,f1值%.2f,参数为%s,特征数量为%d\n' % (
+      bestGmean, f1, bestParams, bestFeatures))
+
+    newx = preprocessing.scale(x)
+    gmean, f1 = svm(newx, y)
+    f.write('svm模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+    print('svm模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+
+    gmean, f1 = adaboost(x, y)
+    f.write('adaboost模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+    print('adaboost模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+
+    gmean, f1 = decisionTree(x, y)
+    f.write('决策树模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+    print('决策树模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+
+    gmean, f1 = beyes(x, y)
+    f.write('贝叶斯模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+    print('贝叶斯模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,1 @@
+数据集./data/ar1.arff数据集./data/JM1.arff数据集./data/ar6.arff数据集./data/PC1.arff数据集./data/PC5.arff数据集./data/KC3.arff数据集./data/KC1.arff数据集./data/PC4.arff数据集./data/MW1.arff数据集./data/ar4.arff数据集./data/PC3.arff数据集./data/MC1.arff数据集./data/ar3.arff数据集./data/PC2.arff数据集./data/CM1.arff数据集./data/ar5.arff数据集./data/MC2.arff
