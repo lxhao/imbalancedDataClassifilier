@@ -8,7 +8,7 @@ import time
 import numpy as np
 import pandas as pd
 from sklearn import preprocessing
-from sklearn.ensemble import AdaBoostClassifier
+from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
 from sklearn.feature_selection import chi2
 from sklearn.cross_validation import StratifiedKFold, cross_val_score
 from sklearn.feature_selection import SelectKBest
@@ -16,6 +16,7 @@ from sklearn.grid_search import GridSearchCV
 from sklearn.metrics import f1_score
 from sklearn.metrics import make_scorer
 from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
@@ -190,44 +191,47 @@ def examplesDistri(y):
 
 def GASvm(x, y):
   x = preprocessing.scale(x)
-  # search(x, y)
-  # svm
-  posiNum, negaNum = examplesDistri(y)
-  pipeSvc = Pipeline([('clf', SVC(class_weight={1: negaNum / posiNum}))])
-  rangeC = np.linspace(1, 100, num=30)
-  rangeGama = np.linspace(0, 1, num=100)
-  paramGrid = [{
-    'clf__C': rangeC,
-    'clf__gamma': rangeGama
-  }
-  ]
-  greadSearch = GridSearchCV(estimator=pipeSvc,
-                             param_grid=paramGrid,
-                             scoring=scorer,
-                             cv=5,
-                             n_jobs=-1)
-  greadSearch = greadSearch.fit(x, y)
-  bestParams = greadSearch.best_params_
-  bestModel = SVC(C=bestParams['clf__C'], gamma=bestParams['clf__gamma'],
-                  class_weight={1: negaNum / posiNum})
-  f1 = crossValidation(bestModel, x, y, 'f1')
-  return greadSearch.best_score_, greadSearch.best_params_, f1
+  search(x, y)
+  # # svm
+  # posiNum, negaNum = examplesDistri(y)
+  # pipeSvc = Pipeline([('clf', SVC(class_weight={1: negaNum / posiNum}))])
+  # rangeC = np.linspace(1, 100, num=30)
+  # rangeGama = np.linspace(0, 1, num=100)
+  # paramGrid = [{
+  #   'clf__C': rangeC,
+  #   'clf__gamma': rangeGama
+  # }
+  # ]
+  # greadSearch = GridSearchCV(estimator=pipeSvc,
+  #                            param_grid=paramGrid,
+  #                            scoring=scorer,
+  #                            cv=5,
+  #                            n_jobs=-1)
+  # greadSearch = greadSearch.fit(x, y)
+  # bestParams = greadSearch.best_params_
+  # bestModel = SVC(C=bestParams['clf__C'], gamma=bestParams['clf__gamma'],
+  #                 class_weight={1: negaNum / posiNum})
+  # f1 = crossValidation(bestModel, x, y, 'f1')
+  # return greadSearch.best_score_, greadSearch.best_params_, f1
 
 
 # Define fitness function.
 # @engine.fitness_register
 def fitness(indv, x, y):
-  weight, gama = indv.variants
-  svmModel = SVC(class_weight={1: weight}, gamma=gama)
-  value = crossValidation(svmModel, x, y, scorer=scorer)
-  return value
+  print(indv.variants)
+  # weight, gama = indv.variants
+  # svmModel = SVC(class_weight={1: weight}, gamma=gama)
+  # value = crossValidation(svmModel, x, y, scorer=scorer)
+  return random.randint()
 
 
 def search(x, y):
-  # Define population.
-  indv_template = GAIndividual(ranges=[(1, 10), (0, 1)],
-                               encoding='binary',
-                               eps=0.001)
+  # Define population. weight, C, gamma, features
+  features = len([x[0]])
+  indv_template = GAIndividual(
+      ranges=[(1, 20), (1, 1000), (1, 10000), (1, 2 ** 37)],
+      encoding='binary',
+      eps=1)
   population = GAPopulation(indv_template=indv_template, size=30).init()
 
   # Create genetic operators.
@@ -260,6 +264,27 @@ def decisionTree(x, y):
   return gmean, f1
 
 
+# 随机森林
+def randomForest(x, y):
+  gmean = crossValidation(RandomForestClassifier(n_estimators=10), x, y, scorer)
+  f1 = crossValidation(RandomForestClassifier(n_estimators=10), x, y, 'f1')
+  return gmean, f1
+
+
+def kNN(x, y):
+  # 测试k近邻模型的准确率
+  k_range = range(1, 31)
+  bestGmean = 0
+  bestF1 = 0
+  for i in k_range:
+    gmean = crossValidation(KNeighborsClassifier(n_neighbors=i), x, y, scorer)
+    f1 = crossValidation(KNeighborsClassifier(n_neighbors=i), x, y, 'f1')
+    if gmean > bestGmean:
+      bestGmean = gmean
+      bestF1 = f1
+  return bestGmean, bestF1
+
+
 def beyes(x, y):
   f1 = crossValidation(GaussianNB(), x, y, 'f1')
   gmean = crossValidation(GaussianNB(), x, y, scorer)
@@ -276,8 +301,9 @@ def adaboost(x, y):
 
 
 def svm(x, y):
+  x = preprocessing.scale(x)
   pipeSvc = Pipeline([('clf', SVC())])
-  rangeC = np.linspace(1, 100, num=30)
+  rangeC = np.linspace(1, 1000, num=30)
   rangeGama = np.linspace(0, 1, num=100)
   paramGrid = [{
     'clf__C': rangeC,
@@ -313,31 +339,18 @@ def main():
   f = open(getFileName(), 'w')
   dataSets = readData("./data/")
   for filename, data in dataSets.items():
-    if not filename.startswith('./data/CM1'):
-      continue
+    # if not filename.startswith('./data/CM1'):
+    #   continue
     # getDataInfo(filename, data)
     x = data[:, : -1]
     y = data[:, -1]
     x = x.astype(np.float64)
     y = y.astype(np.int32)
     f.write('\n数据集%s\n' % (filename))
-    bestGmean = 0
-    bestParams = {}
-    bestFeatures = 0
-    for i in range(5, 13):
-      newX = SelectKBest(chi2, k=i).fit_transform(x, y)
-      tmpGmean, tmpParams, f1 = GASvm(newX, y)
-      if tmpGmean > bestGmean:
-        bestGmean = tmpGmean
-        bestParams = tmpParams
-        bestFeatures = i
-    print('GASvm:\ng-mean值为%.2f,f1值%.2f,参数为%s,特征数量为%d' % (
-      bestGmean, f1, bestParams, bestFeatures))
-    f.write('GASvm:\ng-mean值为%.2f,f1值%.2f,参数为%s,特征数量为%d\n' % (
-      bestGmean, f1, bestParams, bestFeatures))
+    print('\n数据集%s\n' % (filename))
+    print('样本数量:', len(y))
 
-    newx = preprocessing.scale(x)
-    gmean, f1 = svm(newx, y)
+    gmean, f1 = svm(x, y)
     f.write('svm模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
     print('svm模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
 
@@ -345,13 +358,21 @@ def main():
     f.write('adaboost模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
     print('adaboost模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
 
-    gmean, f1 = decisionTree(x, y)
-    f.write('决策树模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
-    print('决策树模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
-
     gmean, f1 = beyes(x, y)
     f.write('贝叶斯模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
     print('贝叶斯模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+
+    gmean, f1 = randomForest(x, y)
+    f.write('随机森林模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+    print('随机森林模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+
+    gmean, f1 = kNN(x, y)
+    f.write('k近邻模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+    print('k近邻模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+
+    gmean, f1 = decisionTree(x, y)
+    f.write('决策树模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
+    print('决策树模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
 
 
 if __name__ == "__main__":
