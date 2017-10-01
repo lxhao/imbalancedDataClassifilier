@@ -223,7 +223,6 @@ def gmeanFitness(engine, indv, x, y):
   key = engine.getKey(indv)
   if engine.getKey(indv) in engine.resultTmp:
     return engine.resultTmp[key]
-  print(len(x[0]))
   weight, C, gama, features = indv.variants
   val = getSvmModelGmean(weight, C, gama, features, x, y)
   engine.resultTmp[key] = val
@@ -231,7 +230,7 @@ def gmeanFitness(engine, indv, x, y):
 
 
 # 迭代过程中结果保存
-class ConsoleOutput(OnTheFlyAnalysis):
+class AnalySis(OnTheFlyAnalysis):
   master_only = True
   interval = 1
 
@@ -283,7 +282,7 @@ def search(dataSetName, x, y):
   # Here we pass all built-in analysis to engine constructor.
   engine = GAEngine(population=population, selection=selection,
                     crossover=crossover, mutation=mutation,
-                    analysis=[ConsoleOutput],
+                    analysis=[AnalySis],
                     dataSet=DataSet(dataSetName, x, y))
 
   engine.fitness_register(gmeanFitness)
