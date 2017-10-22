@@ -7,7 +7,6 @@ from math import *
 
 import numpy as np
 import pandas as pd
-from sklearn import preprocessing
 from sklearn.cross_validation import StratifiedKFold, cross_val_score
 from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
 from sklearn.grid_search import GridSearchCV
@@ -17,6 +16,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 
+from CCSVM import *
 from gaft.gaft import GAEngine
 from gaft.gaft.components import GAIndividual
 from gaft.gaft.components import GAPopulation
@@ -188,8 +188,9 @@ def GASvm(dataSetName, x, y):
 
 
 # 获取制定参数建立模型的F1值
-def getSvmModelF1(weight, C, gama, features, x, y):
-  x = featuresSeclection(x, features)
+def getSvmModelF1(weight, C, gama, features, x, y, neededSelFeatures):
+  if neededSelFeatures:
+    x = featuresSeclection(x, features)
   svmModel = SVC(class_weight={1: weight}, gamma=gama, C=C)
   return crossValidation(svmModel, x, y, scorer='f1')
 
@@ -205,8 +206,9 @@ def featuresSeclection(x, features):
 
 
 # 获取制定参数建立模型的G-mean值
-def getSvmModelGmean(weight, C, gama, features, x, y):
-  x = featuresSeclection(x, features)
+def getSvmModelGmean(weight, C, gama, features, x, y, neededSelFeatures):
+  if neededSelFeatures:
+    x = featuresSeclection(x, features)
   svmModel = SVC(class_weight={1: weight}, gamma=gama, C=C)
   return crossValidation(svmModel, x, y, scorer=g_mean)
 
@@ -215,7 +217,7 @@ def f1Fitness(indv, x, y):
   # return random.randint(1, 10) * 1.0
   # print(indv.variants)
   weight, C, gama, features = indv.variants
-  return getSvmModelF1(weight, C, gama, features, x, y)
+  return getSvmModelF1(weight, C, gama, features, x, y, False)
 
 
 def gmeanFitness(engine, indv, x, y):
@@ -224,7 +226,7 @@ def gmeanFitness(engine, indv, x, y):
   if engine.getKey(indv) in engine.resultTmp:
     return engine.resultTmp[key]
   weight, C, gama, features = indv.variants
-  val = getSvmModelGmean(weight, C, gama, features, x, y)
+  val = getSvmModelGmean(weight, C, gama, features, x, y, False)
   engine.resultTmp[key] = val
   return val
 
@@ -234,23 +236,52 @@ class AnalySis(OnTheFlyAnalysis):
   master_only = True
   interval = 1
 
+  def setup(self, ng, engine):
+    # Generation numbers.
+    self.ngs = []
+
+    # Best fitness in each generation.
+    self.fitness_values = []
+
+    # Best variants.
+    self.variants = []
+
+    self.f1 = []
+
   def register_step(self, g, population, engine):
     best_indv = population.best_indv(engine.fitness)
+    f1 = f1Fitness(best_indv, engine.dataSet.x, engine.dataSet.y)
     msg = 'Generation: {},\n best g-mean: {:.3f}, best-f1:{:.3f}'. \
-      format(g, engine.fitness(best_indv),
-             f1Fitness(best_indv, engine.dataSet.x, engine.dataSet.y))
+      format(g, engine.fitness(best_indv), f1)
+    engine.logger.info(best_indv.variants)
     engine.logger.info(msg)
+
+    self.ngs.append(g)
+    self.variants.append(best_indv.variants)
+    self.fitness_values.append(engine.fitness(best_indv))
+    self.f1.append(f1)
 
   def finalize(self, population, engine):
     best_indv = population.best_indv(engine.fitness)
     x = best_indv.variants
     y = engine.fitness(best_indv)
-    msg = 'Optimal solution:\n ({},\n gmean:{:.3f},f1:{:.3f})\n'. \
-      format(x, y, f1Fitness(best_indv, engine.dataSet.x, engine.dataSet.y))
+    f1 = f1Fitness(best_indv, engine.dataSet.x, engine.dataSet.y)
+    msg = 'Optimal solution:\n ({},\n gmean:{:.3f},f1:{:.3f})\n'.format(x, y,
+                                                                        f1)
     with open('result.txt', 'a', encoding='utf-8') as f:
       nowTime = time.strftime('%Y-%m-%d %H:%m', time.localtime(time.time()))
       f.write('%s\n%s %s\n' % (nowTime, engine.dataSet.name, msg))
     self.logger.info(msg)
+
+    with open('best_fit.py', 'a',
+              encoding='utf-8') as f:
+      f.write('best_fit[\"%s\"] = [\n' % engine.dataSet.name)
+      for ng, x, y, f1 in zip(self.ngs, self.variants, self.fitness_values,
+                              self.f1):
+        f.write('    ({}, {}, {}, {}),\n'.format(ng, x, y, f1))
+      f.write(']\n\n')
+
+    self.logger.info('Best fitness values are written to best_fit.py')
 
 
 class DataSet:
@@ -287,7 +318,7 @@ def search(dataSetName, x, y):
 
   engine.fitness_register(gmeanFitness)
   engine.dynamic_linear_scaling(target='max', ksi0=0.5, r=0.9)
-  engine.run(ng=100)
+  engine.run(ng=10)
 
 
 def getFileName():
@@ -402,28 +433,6 @@ def compare(f, x, y):
   print('决策树模型：\ng-mean值为%.2f,f1值%.2f\n' % (gmean, f1))
 
 
-def computeF1():
-  dataSets = readData("./data/")
-  while True:
-    dataSetName = input("data set name:")
-    dataSetName = './data/' + dataSetName + '.arff'
-    data = dataSets[dataSetName]
-    x = data[:, : -1]
-    y = data[:, -1]
-    x = x.astype(np.float64)
-    y = y.astype(np.int32)
-
-    weight = float(input("weight:"))
-    C = float(input("C+:"))
-    gama = float(input("gama:"))
-
-    features = input("selected features:")
-    features = float(features)
-
-    print('F1值:', getSvmModelF1(weight, C, gama, features, x, y))
-    print('G-mean值：', getSvmModelGmean(weight, C, gama, features, x, y))
-
-
 def main():
   dataSets = readData("./data/")
   for filename, data in dataSets.items():
@@ -439,22 +448,7 @@ def main():
     print('特征数量:', len(x[0]))
     # compare(f, x, y)
     GASvm(filename, x, y)
-
-
-def test():
-  dataSets = readData("./data/")
-  data = dataSets['./data/PC3.arff']
-  x = data[:, : -1]
-  y = data[:, -1]
-  x = x.astype(np.float64)
-  x = preprocessing.scale(x)
-  y = y.astype(np.int32)
-  weight = float('13.68638222547763')
-  C = float('545.9340352483406')
-  gama = float('0.353379282138933')
-  features = float('2560897659.0')
-  print(getSvmModelGmean(weight, C, gama, features, x, y))
-  print(getSvmModelF1(weight, C, gama, features, x, y))
+    # CCSVM(x, y)
 
 
 if __name__ == "__main__":
